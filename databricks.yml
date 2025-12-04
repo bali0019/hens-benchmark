@@ -1,0 +1,52 @@
+# Databricks Asset Bundle for HENS Benchmark
+#
+# Usage:
+#   databricks bundle validate              # Validate configuration
+#   databricks bundle deploy                # Deploy to workspace
+#   databricks bundle run hens_benchmark    # Run the benchmark job
+#
+# Prerequisites:
+#   - Databricks CLI configured (databricks auth login)
+#   - Set DATABRICKS_HOST or use --profile
+
+bundle:
+  name: hens-benchmark
+
+variables:
+  cluster_node_type:
+    description: "GPU instance type for the benchmark"
+    default: g6e.4xlarge
+
+sync:
+  include:
+    - "run_hens_databricks.py"
+
+resources:
+  jobs:
+    hens_benchmark:
+      name: "HENS Benchmark"
+      description: "NVIDIA Earth2Studio HENS inference benchmark"
+
+      tasks:
+        - task_key: run_benchmark
+          notebook_task:
+            notebook_path: ./run_hens_databricks.py
+          new_cluster:
+            spark_version: "16.4.x-gpu-ml-scala2.12"
+            node_type_id: ${var.cluster_node_type}
+            num_workers: 0  # Single node
+            spark_conf:
+              spark.master: "local[*]"
+              spark.databricks.cluster.profile: singleNode
+            custom_tags:
+              ResourceClass: SingleNode
+            data_security_mode: SINGLE_USER
+            aws_attributes:
+              ebs_volume_type: GENERAL_PURPOSE_SSD
+              ebs_volume_count: 1
+              ebs_volume_size: 100
+
+targets:
+  dev:
+    mode: development
+    default: true

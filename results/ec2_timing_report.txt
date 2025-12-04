@@ -1,0 +1,16 @@
+HENS EC2 Benchmark - Timing Report
+Run date: 2025-12-04T19:10:40.889157
+Total time: 260.34s (4.34 minutes)
+
+Checkpoints:
+  environment_checked: +1.16s
+  imports_start: +0.00s
+  imports_complete: +14.92s
+  packages_loaded: +0.00s
+  data_source_ready: +0.00s
+  model_0_loaded: +67.58s
+  inference_0_complete: +58.19s
+  model_1_loaded: +53.86s
+  inference_1_complete: +33.35s
+  all_inference_complete: +0.36s
+  visualization_complete: +30.93s

@@ -1,0 +1,16 @@
+HENS Databricks Benchmark - Timing Report
+Run date: 2025-12-04T19:23:52.842706
+Total time: 219.60s (3.66 minutes)
+
+Checkpoints:
+  environment_checked: +2.30s
+  imports_start: +0.10s
+  imports_complete: +16.25s
+  packages_loaded: +0.00s
+  data_source_ready: +0.00s
+  model_0_loaded: +29.51s
+  inference_0_complete: +39.70s
+  model_1_loaded: +29.77s
+  inference_1_complete: +36.30s
+  all_inference_complete: +0.44s
+  visualization_complete: +65.14s

@@ -1,0 +1,28 @@
+# Generated files
+ec2_instance.env
+*.pem
+CLAUDE.md
+
+# Output files
+outputs/
+*.zarr/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+
+# OS
+.DS_Store
+Thumbs.db
