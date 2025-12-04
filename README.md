@@ -2,7 +2,7 @@
 
 Compare NVIDIA Earth2Studio HENS (Huge Ensembles) inference performance between Databricks and AWS EC2 with NVIDIA L40S GPU.
 
-## Benchmark Results (December 2024)
+## Benchmark Results (December 2025)
 
 | Platform | Total Time | Notes |
 |----------|------------|-------|
