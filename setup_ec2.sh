@@ -55,7 +55,7 @@ done
 
 # Copy files to EC2
 echo "[2/6] Copying files to EC2..."
-$SCP "$PROJECT_DIR/run_hens_ec2.py" ubuntu@$PUBLIC_IP:~/run_hens.py
+$SCP "$PROJECT_DIR/run_hens_ec2.py" ubuntu@$PUBLIC_IP:~/run_hens_ec2.py
 $SCP "$REQUIREMENTS_FILE" ubuntu@$PUBLIC_IP:~/
 echo "  Files copied"
 
@@ -92,7 +92,7 @@ REMOTE_SCRIPT
 echo "  Dependencies installed"
 
 # Verify GPU
-echo "[5/6] Verifying GPU and environment..."
+echo "[5/7] Verifying GPU and environment..."
 $SSH << 'REMOTE_SCRIPT'
 set -e
 source ~/hens_env/bin/activate
@@ -109,8 +109,18 @@ echo "=== Earth2Studio ==="
 python -c "import earth2studio; print(f'earth2studio: {earth2studio.__version__}')"
 REMOTE_SCRIPT
 
+# Setup ephemeral drive for large outputs (549GB available)
+echo "[6/7] Setting up ephemeral drive for outputs..."
+$SSH << 'REMOTE_SCRIPT'
+# Create output directory on ephemeral NVMe drive (avoids disk full on root)
+sudo mkdir -p /opt/dlami/nvme/hens_outputs
+sudo chown ubuntu:ubuntu /opt/dlami/nvme/hens_outputs
+echo "  Ephemeral output dir ready: /opt/dlami/nvme/hens_outputs"
+df -h /opt/dlami/nvme
+REMOTE_SCRIPT
+
 # Set up auto-shutdown timer
-echo "[6/6] Setting up auto-shutdown timer (${AUTO_SHUTDOWN_MINS} minutes)..."
+echo "[7/7] Setting up auto-shutdown timer (${AUTO_SHUTDOWN_MINS} minutes)..."
 $SSH "sudo shutdown +${AUTO_SHUTDOWN_MINS} 'Auto-shutdown: Instance will terminate to save costs'"
 echo "  Auto-shutdown scheduled in ${AUTO_SHUTDOWN_MINS} minutes"
 echo "  (Instance will auto-terminate on shutdown)"
@@ -124,9 +134,11 @@ echo ""
 echo "To run the benchmark:"
 echo "  $SSH"
 echo "  source ~/hens_env/bin/activate"
-echo "  python run_hens.py --output-dir outputs"
+echo "  python run_hens_ec2.py"
 echo ""
 echo "Or run directly:"
-echo "  $SSH 'source ~/hens_env/bin/activate && python run_hens.py --output-dir outputs'"
+echo "  $SSH 'source ~/hens_env/bin/activate && python run_hens_ec2.py'"
+echo ""
+echo "Output will be saved to: /opt/dlami/nvme/hens_outputs (549GB ephemeral drive)"
 echo ""
 echo "=============================================="

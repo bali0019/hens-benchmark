@@ -4,23 +4,42 @@ Compare NVIDIA Earth2Studio HENS (Huge Ensembles) inference performance between 
 
 ## Benchmark Results (December 2025)
 
-| Platform | Total Time | Notes |
-|----------|------------|-------|
-| **Databricks** | 219.60s (3.66 min) | DBR 16.4 ML, g6e.4xlarge, single node |
-| **AWS EC2** | 260.34s (4.34 min) | g6e.4xlarge, standalone |
-| **Difference** | **Databricks ~16% faster** | 40.74s savings |
+Multi-NSTEPS benchmark comparing inference at different forecast lengths.
 
-### Detailed Timing Breakdown
+### Summary
 
-| Stage | Databricks | EC2 | Difference |
-|-------|------------|-----|------------|
-| Environment Check | 2.30s | 1.16s | EC2 1.14s faster |
-| Imports | 16.25s | 14.92s | EC2 1.33s faster |
-| Model 0 Load | 29.51s | 67.58s | DBR 38.07s faster |
-| Inference 0 | 39.70s | 58.19s | DBR 18.49s faster |
-| Model 1 Load | 29.77s | 53.86s | DBR 24.09s faster |
-| Inference 1 | 36.30s | 33.35s | EC2 2.95s faster |
-| Visualization | 65.14s | 30.93s | EC2 34.21s faster |
+| Platform | NSTEPS=400 Time | Per-Step | Total Time | Winner |
+|----------|-----------------|----------|------------|--------|
+| **Databricks** | 905.26s | 2.26s/step | 2416s (40 min) | **10% faster** |
+| **AWS EC2** | 1007.19s | 2.52s/step | 2503s (42 min) | |
+
+**Key Finding:** Databricks is ~10% faster at scale (NSTEPS=400), disproving claims that standalone EC2 is faster.
+
+### Detailed Results by NSTEPS
+
+| NSTEPS | Forecast | Databricks M0 | Databricks M1 | EC2 M0 | EC2 M1 |
+|--------|----------|---------------|---------------|--------|--------|
+| 4 | 24 hours | 43.79s | 36.47s | 35.93s | 33.73s |
+| 40 | 10 days | 114.86s | 115.44s | 122.41s | 122.41s |
+| 400 | 100 days | 904.74s | 905.77s | 1007.14s | 1007.24s |
+
+### Per-Step Analysis
+
+| NSTEPS | Databricks Avg/Step | EC2 Avg/Step | Notes |
+|--------|---------------------|--------------|-------|
+| 4 | 10.04s | 8.71s | High startup overhead |
+| 40 | 2.88s | 3.06s | Overhead amortizing |
+| 400 | 2.26s | 2.52s | True inference speed |
+
+### Variance Analysis (Model 0 vs Model 1)
+
+| NSTEPS | Databricks Variance | EC2 Variance |
+|--------|---------------------|--------------|
+| 4 | 7.32s (20%) | 2.20s (6%) |
+| 40 | 0.58s (<1%) | 0.00s (0%) |
+| 400 | 1.03s (<1%) | 0.10s (<0.01%) |
+
+Lower variance indicates more reliable measurements. Both platforms show excellent consistency at NSTEPS=400.
 
 ## Running on EC2
 

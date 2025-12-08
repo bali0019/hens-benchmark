@@ -4,6 +4,8 @@
 # MAGIC
 # MAGIC This notebook runs NVIDIA Earth2Studio HENS inference for performance comparison with EC2.
 # MAGIC
+# MAGIC **Benchmark Configuration:** NSTEPS = [4, 40, 400]
+# MAGIC
 # MAGIC **Important:** The pip install cell below is NOT counted in the benchmark timing.
 
 # COMMAND ----------
@@ -71,56 +73,18 @@ Based on: NVIDIA Earth2Studio HENS example notebook
 """
 
 import gc
+import json
 import os
 import time
 from datetime import datetime, timedelta
 
 # ============================================================
-# CONFIGURATION - Same as EC2 defaults
+# CONFIGURATION
 # ============================================================
 OUTPUT_DIR = "/tmp/hens_outputs"
-NSTEPS = 4          # Number of forecast steps (6h each)
-NENSEMBLE = 2       # Ensemble members per checkpoint
+NSTEPS_LIST = [4, 40, 400]  # Multiple NSTEPS for comprehensive benchmark
+NENSEMBLE = 2               # Ensemble members per checkpoint
 START_DATE = "2024-01-01"
-SKIP_VIZ = False
-
-# COMMAND ----------
-
-# Timing tracker
-class Timer:
-    def __init__(self):
-        self.checkpoints = {}
-        self.start_time = None
-
-    def start(self):
-        self.start_time = time.time()
-        self.checkpoints['script_start'] = self.start_time
-        print(f"[TIMER] Script started at {datetime.now().isoformat()}")
-
-    def checkpoint(self, name):
-        now = time.time()
-        self.checkpoints[name] = now
-        elapsed = now - self.start_time
-        print(f"[TIMER] {name}: {elapsed:.2f}s elapsed")
-
-    def report(self):
-        total = time.time() - self.start_time
-        print("\n" + "="*60)
-        print("TIMING REPORT")
-        print("="*60)
-        prev_time = self.start_time
-        for name, ts in self.checkpoints.items():
-            if name == 'script_start':
-                continue
-            delta = ts - prev_time
-            print(f"  {name}: +{delta:.2f}s")
-            prev_time = ts
-        print("-"*60)
-        print(f"  TOTAL: {total:.2f}s ({total/60:.2f} minutes)")
-        print("="*60)
-        return total
-
-timer = Timer()
 
 # COMMAND ----------
 
@@ -157,10 +121,8 @@ def check_environment():
 
 # COMMAND ----------
 
-def run_inference(output_dir: str, nsteps: int, nensemble: int, start_date: datetime):
-    """Run HENS ensemble inference."""
-
-    timer.checkpoint("imports_start")
+def run_benchmark(output_dir: str, nensemble: int, start_date: datetime):
+    """Run HENS ensemble inference for multiple NSTEPS values."""
 
     import numpy as np
     import torch
@@ -175,172 +137,120 @@ def run_inference(output_dir: str, nsteps: int, nensemble: int, start_date: date
     )
     from earth2studio.run import ensemble
 
-    timer.checkpoint("imports_complete")
-
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
 
-    # Set up two model packages for each checkpoint
+    # Results storage
+    results = {
+        "platform": "Databricks",
+        "runtime": "DBR 16.4 ML",
+        "instance_type": "g6e.4xlarge",
+        "run_date": datetime.now().isoformat(),
+        "nensemble": nensemble,
+        "start_date": start_date.strftime("%Y-%m-%d"),
+        "benchmarks": []
+    }
+
+    # Set up two model packages
     print("\n[INFO] Loading model packages from HuggingFace...")
-    model_package_1 = Package(
-        "hf://datasets/maheshankur10/hens/earth2mip_prod_registry/sfno_linear_74chq_sc2_layers8_edim620_wstgl2-epoch70_seed102",
-        cache_options={
-            "cache_storage": Package.default_cache("hens_1"),
-            "same_names": True,
-        },
-    )
-
-    model_package_2 = Package(
-        "hf://datasets/maheshankur10/hens/earth2mip_prod_registry/sfno_linear_74chq_sc2_layers8_edim620_wstgl2-epoch70_seed103",
-        cache_options={
-            "cache_storage": Package.default_cache("hens_2"),
-            "same_names": True,
-        },
-    )
-
-    timer.checkpoint("packages_loaded")
+    model_packages = [
+        Package(
+            "hf://datasets/maheshankur10/hens/earth2mip_prod_registry/sfno_linear_74chq_sc2_layers8_edim620_wstgl2-epoch70_seed102",
+            cache_options={
+                "cache_storage": Package.default_cache("hens_1"),
+                "same_names": True,
+            },
+        ),
+        Package(
+            "hf://datasets/maheshankur10/hens/earth2mip_prod_registry/sfno_linear_74chq_sc2_layers8_edim620_wstgl2-epoch70_seed103",
+            cache_options={
+                "cache_storage": Package.default_cache("hens_2"),
+                "same_names": True,
+            },
+        ),
+    ]
 
     # Create the data source
     print("[INFO] Initializing GFS data source...")
     data = GFS()
 
-    timer.checkpoint("data_source_ready")
-
-    # Run inference for each checkpoint
     start_date_str = start_date.strftime("%Y-%m-%d")
 
-    for i, package in enumerate([model_package_1, model_package_2]):
-        print(f"\n[INFO] Processing checkpoint {i+1}/2...")
+    # Run benchmark for each NSTEPS value
+    for nsteps in NSTEPS_LIST:
+        print(f"\n{'='*60}")
+        print(f"BENCHMARK: NSTEPS = {nsteps}")
+        print(f"{'='*60}")
 
-        # Load SFNO model from package
-        print(f"[INFO] Loading SFNO model from checkpoint {i+1}...")
-        model = SFNO.load_model(package)
+        benchmark_result = {
+            "nsteps": nsteps,
+            "forecast_hours": nsteps * 6,
+            "inference_times": [],
+            "time_per_step": []
+        }
 
-        timer.checkpoint(f"model_{i}_loaded")
+        for i, package in enumerate(model_packages):
+            print(f"\n[INFO] Processing model {i} (nsteps={nsteps})...")
 
-        # Perturbation method
-        noise_amplification = torch.zeros(model.input_coords()["variable"].shape[0])
-        index_z500 = list(model.input_coords()["variable"]).index("z500")
-        noise_amplification[index_z500] = 39.27  # z500 (0.35 * z500 skill)
-        noise_amplification = noise_amplification.reshape(1, 1, 1, -1, 1, 1)
+            # Load SFNO model
+            model = SFNO.load_model(package)
 
-        seed_perturbation = CorrelatedSphericalGaussian(noise_amplitude=noise_amplification)
-        perturbation = HemisphericCentredBredVector(
-            model, data, seed_perturbation, noise_amplitude=noise_amplification
-        )
+            # Perturbation method
+            noise_amplification = torch.zeros(model.input_coords()["variable"].shape[0])
+            index_z500 = list(model.input_coords()["variable"]).index("z500")
+            noise_amplification[index_z500] = 39.27
+            noise_amplification = noise_amplification.reshape(1, 1, 1, -1, 1, 1)
 
-        # IO object
-        zarr_path = os.path.join(output_dir, f"hens_{i}.zarr")
-        io = ZarrBackend(
-            file_name=zarr_path,
-            chunks={"ensemble": 1, "time": 1, "lead_time": 1},
-            backend_kwargs={"overwrite": True},
-        )
+            seed_perturbation = CorrelatedSphericalGaussian(noise_amplitude=noise_amplification)
+            perturbation = HemisphericCentredBredVector(
+                model, data, seed_perturbation, noise_amplitude=noise_amplification
+            )
 
-        print(f"[INFO] Running ensemble inference (nsteps={nsteps}, nensemble={nensemble})...")
-        inference_start = time.time()
+            # IO object
+            zarr_path = os.path.join(output_dir, f"hens_nsteps{nsteps}_model{i}.zarr")
+            io = ZarrBackend(
+                file_name=zarr_path,
+                chunks={"ensemble": 1, "time": 1, "lead_time": 1},
+                backend_kwargs={"overwrite": True},
+            )
 
-        io = ensemble(
-            [start_date_str],
-            nsteps,
-            nensemble,
-            model,
-            data,
-            io,
-            perturbation,
-            batch_size=1,
-            output_coords={"variable": np.array(["u10m", "v10m"])},
-        )
+            print(f"[INFO] Running inference (nsteps={nsteps}, nensemble={nensemble})...")
+            inference_start = time.time()
 
-        inference_time = time.time() - inference_start
-        print(f"[INFO] Checkpoint {i+1} inference completed in {inference_time:.2f}s")
+            io = ensemble(
+                [start_date_str],
+                nsteps,
+                nensemble,
+                model,
+                data,
+                io,
+                perturbation,
+                batch_size=1,
+                output_coords={"variable": np.array(["u10m", "v10m"])},
+            )
 
-        print(io.root.tree())
+            inference_time = time.time() - inference_start
+            time_per_step = inference_time / nsteps
 
-        timer.checkpoint(f"inference_{i}_complete")
+            benchmark_result["inference_times"].append(round(inference_time, 2))
+            benchmark_result["time_per_step"].append(round(time_per_step, 2))
 
-        # Clean up to free VRAM
-        del model
-        del perturbation
-        gc.collect()
-        torch.cuda.empty_cache()
+            print(f"[RESULT] Model {i}: {inference_time:.2f}s total, {time_per_step:.2f}s/step")
 
-    timer.checkpoint("all_inference_complete")
+            # Clean up
+            del model
+            del perturbation
+            gc.collect()
+            torch.cuda.empty_cache()
 
-    return output_dir
+        results["benchmarks"].append(benchmark_result)
 
-# COMMAND ----------
+        # Print summary for this NSTEPS
+        times = benchmark_result["inference_times"]
+        print(f"\n[SUMMARY] NSTEPS={nsteps}: Model 0={times[0]:.2f}s, Model 1={times[1]:.2f}s")
+        print(f"          Variance: {abs(times[0] - times[1]):.2f}s")
 
-def create_visualization(output_dir: str, start_date: datetime, lead_time: int = 4):
-    """Create wind speed visualization from inference results."""
-
-    print("\n[INFO] Creating visualization...")
-
-    import cartopy.crs as ccrs
-    import matplotlib.pyplot as plt
-    import numpy as np
-    import xarray as xr
-
-    plot_date = start_date + timedelta(hours=int(6 * lead_time))
-
-    # Load data from both zarr stores
-    ds0 = xr.open_zarr(os.path.join(output_dir, "hens_0.zarr"))
-    ds1 = xr.open_zarr(os.path.join(output_dir, "hens_1.zarr"))
-
-    # Combine the datasets
-    ds = xr.concat([ds0, ds1], dim="ensemble")
-
-    # Calculate wind speed magnitude
-    wind_speed = np.sqrt(ds.u10m**2 + ds.v10m**2)
-
-    # Get mean and std of 4th timestep across ensemble
-    mean_wind = wind_speed.isel(time=0, lead_time=lead_time).mean(dim="ensemble")
-    std_wind = wind_speed.isel(time=0, lead_time=lead_time).std(dim="ensemble")
-
-    # Create figure with two subplots
-    fig, (ax1, ax2) = plt.subplots(
-        1, 2, figsize=(15, 4), subplot_kw={"projection": ccrs.PlateCarree()}
-    )
-
-    # Plot mean
-    p1 = ax1.contourf(
-        mean_wind.coords["lon"],
-        mean_wind.coords["lat"],
-        mean_wind,
-        levels=15,
-        transform=ccrs.PlateCarree(),
-        cmap="nipy_spectral",
-    )
-    ax1.coastlines()
-    ax1.set_title(f'Mean Wind Speed\n{plot_date.strftime("%Y-%m-%d %H:%M UTC")}')
-    fig.colorbar(p1, ax=ax1, label="m/s")
-
-    # Plot standard deviation
-    p2 = ax2.contourf(
-        std_wind.coords["lon"],
-        std_wind.coords["lat"],
-        std_wind,
-        levels=15,
-        transform=ccrs.PlateCarree(),
-        cmap="viridis",
-    )
-    ax2.coastlines()
-    ax2.set_title(
-        f'Wind Speed Standard Deviation\n{plot_date.strftime("%Y-%m-%d %H:%M UTC")}'
-    )
-    fig.colorbar(p2, ax=ax2, label="m/s")
-
-    plt.tight_layout()
-
-    # Save the figure
-    output_file = os.path.join(output_dir, f"hens_wind_{plot_date.strftime('%Y_%m_%d')}.jpg")
-    plt.savefig(output_file)
-    print(f"[INFO] Visualization saved to: {output_file}")
-
-    # Display in notebook
-    plt.show()
-
-    timer.checkpoint("visualization_complete")
+    return results
 
 # COMMAND ----------
 
@@ -356,54 +266,67 @@ print("="*60)
 print("HENS (Huge Ensembles) Inference - Databricks Benchmark")
 print("="*60)
 print(f"Output directory: {OUTPUT_DIR}")
-print(f"Forecast steps: {NSTEPS} (= {NSTEPS * 6}h)")
+print(f"NSTEPS values: {NSTEPS_LIST}")
 print(f"Ensemble members: {NENSEMBLE} per checkpoint (x2 checkpoints)")
 print(f"Start date: {START_DATE}")
 print("="*60)
 
-# START TIMING
-timer.start()
+script_start = time.time()
 
 # Check environment
 check_environment()
-timer.checkpoint("environment_checked")
 
 # COMMAND ----------
 
-# Run inference
-run_inference(OUTPUT_DIR, NSTEPS, NENSEMBLE, start_date)
+# Run benchmark
+results = run_benchmark(OUTPUT_DIR, NENSEMBLE, start_date)
+
+total_time = time.time() - script_start
+results["total_time"] = round(total_time, 2)
 
 # COMMAND ----------
 
-# Create visualization
-if not SKIP_VIZ:
-    create_visualization(OUTPUT_DIR, start_date)
+# Save results as JSON
+results_file = os.path.join(OUTPUT_DIR, "benchmark_results.json")
+with open(results_file, "w") as f:
+    json.dump(results, f, indent=2)
+print(f"\n[INFO] Results saved to: {results_file}")
+
+# Print final summary
+print("\n" + "="*60)
+print("FINAL BENCHMARK RESULTS")
+print("="*60)
+print(f"{'NSTEPS':<10} {'Model 0 (s)':<15} {'Model 1 (s)':<15} {'Avg/Step (s)':<15}")
+print("-"*60)
+for b in results["benchmarks"]:
+    avg_per_step = sum(b["time_per_step"]) / 2
+    print(f"{b['nsteps']:<10} {b['inference_times'][0]:<15.2f} {b['inference_times'][1]:<15.2f} {avg_per_step:<15.2f}")
+print("-"*60)
+print(f"Total benchmark time: {total_time:.2f}s ({total_time/60:.2f} minutes)")
+print("="*60)
 
 # COMMAND ----------
 
-# Final report
-total_time = timer.report()
-
-# Save timing to file
-timing_file = os.path.join(OUTPUT_DIR, "timing_report.txt")
-with open(timing_file, "w") as f:
-    f.write(f"HENS Databricks Benchmark - Timing Report\n")
+# Save text report
+report_file = os.path.join(OUTPUT_DIR, "timing_report.txt")
+with open(report_file, "w") as f:
+    f.write("HENS Databricks Benchmark - Timing Report\n")
     f.write(f"Run date: {datetime.now().isoformat()}\n")
-    f.write(f"Total time: {total_time:.2f}s ({total_time/60:.2f} minutes)\n\n")
-    f.write("Checkpoints:\n")
-    prev_time = timer.start_time
-    for name, ts in timer.checkpoints.items():
-        if name == 'script_start':
-            continue
-        delta = ts - prev_time
-        f.write(f"  {name}: +{delta:.2f}s\n")
-        prev_time = ts
+    f.write(f"Runtime: DBR 16.4 ML, g6e.4xlarge\n\n")
+    f.write(f"{'NSTEPS':<10} {'Model 0 (s)':<15} {'Model 1 (s)':<15} {'Avg/Step (s)':<15}\n")
+    f.write("-"*60 + "\n")
+    for b in results["benchmarks"]:
+        avg_per_step = sum(b["time_per_step"]) / 2
+        f.write(f"{b['nsteps']:<10} {b['inference_times'][0]:<15.2f} {b['inference_times'][1]:<15.2f} {avg_per_step:<15.2f}\n")
+    f.write("-"*60 + "\n")
+    f.write(f"Total time: {total_time:.2f}s ({total_time/60:.2f} minutes)\n")
 
-print(f"\n[INFO] Timing report saved to: {timing_file}")
+print(f"[INFO] Report saved to: {report_file}")
 print("[INFO] Done!")
 
 # COMMAND ----------
 
+# Copy results to workspace for easy access
 import pathlib
 
 src = pathlib.Path("/tmp/hens_outputs/timing_report.txt")
@@ -414,3 +337,10 @@ dst = pathlib.Path(notebook_path).parent / "timing_report.txt"
 
 dst.parent.mkdir(parents=True, exist_ok=True)
 dst.write_text(src.read_text())
+
+# Also copy JSON results
+src_json = pathlib.Path("/tmp/hens_outputs/benchmark_results.json")
+dst_json = pathlib.Path(notebook_path).parent / "benchmark_results.json"
+dst_json.write_text(src_json.read_text())
+
+print(f"Results copied to: {dst.parent}")

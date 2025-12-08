@@ -2,6 +2,7 @@
 ec2_instance.env
 *.pem
 CLAUDE.md
+vibe_code_history.md
 
 # Output files
 outputs/
