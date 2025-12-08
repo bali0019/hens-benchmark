@@ -13,7 +13,7 @@ Multi-NSTEPS benchmark comparing inference at different forecast lengths.
 | **Databricks** | 905.26s | 2.26s/step | 2416s (40 min) | **10% faster** |
 | **AWS EC2** | 1007.19s | 2.52s/step | 2503s (42 min) | |
 
-**Key Finding:** Databricks is ~10% faster at scale (NSTEPS=400), disproving claims that standalone EC2 is faster.
+**Key Finding:** Databricks is ~10% faster at scale (NSTEPS=400).
 
 ### Detailed Results by NSTEPS
 
